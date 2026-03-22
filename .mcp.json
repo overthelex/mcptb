@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "thunderbird": {
+      "command": "docker",
+      "args": ["compose", "-f", "/home/vovkes/mcptb/docker-compose.yml", "run", "--rm", "-T", "mcptb"]
+    }
+  }
+}

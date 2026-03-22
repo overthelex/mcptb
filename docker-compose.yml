@@ -1,0 +1,7 @@
+services:
+  mcptb:
+    build: .
+    stdin_open: true
+    env_file: .env
+    volumes:
+      - ${HOME}/snap/thunderbird/common/.thunderbird/n7bg74at.default/abook.sqlite:/data/abook.sqlite:ro
