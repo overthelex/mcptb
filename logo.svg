@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f8f8f8"/>
+      <stop offset="100%" style="stop-color:#e8e8e8"/>
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff1a1a"/>
+      <stop offset="50%" style="stop-color:#cc0000"/>
+      <stop offset="100%" style="stop-color:#990000"/>
+    </linearGradient>
+    <linearGradient id="blackGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#333333"/>
+      <stop offset="50%" style="stop-color:#111111"/>
+      <stop offset="100%" style="stop-color:#000000"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="3" dy="4" stdDeviation="6" flood-color="#00000033"/>
+    </filter>
+    <filter id="innerGlow">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="blur"/>
+      <feOffset dx="0" dy="2" result="offsetBlur"/>
+      <feComposite in="SourceGraphic" in2="offsetBlur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="64" ry="64" fill="url(#bg)"/>
+
+  <!-- Subtle border -->
+  <rect width="508" height="508" x="2" y="2" rx="62" ry="62" fill="none" stroke="#d0d0d0" stroke-width="2"/>
+
+  <!-- Decorative diagonal slash between letters -->
+  <line x1="255" y1="100" x2="245" y2="420" stroke="#dd0000" stroke-width="4" opacity="0.3"/>
+
+  <!-- Letter T - Red -->
+  <g filter="url(#shadow)">
+    <!-- T horizontal bar -->
+    <rect x="48" y="120" width="190" height="42" rx="8" fill="url(#redGrad)"/>
+    <!-- T vertical bar -->
+    <rect x="118" y="120" width="44" height="272" rx="8" fill="url(#redGrad)"/>
+    <!-- Highlight on T -->
+    <rect x="56" y="126" width="174" height="6" rx="3" fill="#ffffff" opacity="0.25"/>
+    <rect x="124" y="168" width="8" height="200" rx="4" fill="#ffffff" opacity="0.12"/>
+  </g>
+
+  <!-- Letter B - Black -->
+  <g filter="url(#shadow)">
+    <!-- B vertical bar -->
+    <rect x="280" y="120" width="44" height="272" rx="8" fill="url(#blackGrad)"/>
+    <!-- B top bump -->
+    <path d="M 280,120 L 380,120 Q 430,120 430,180 Q 430,240 380,240 L 280,240 Z" fill="url(#blackGrad)"/>
+    <!-- B bottom bump (slightly wider) -->
+    <path d="M 280,240 L 390,240 Q 445,240 445,310 Q 445,392 390,392 L 280,392 Z" fill="url(#blackGrad)"/>
+    <!-- Inner cutout top -->
+    <path d="M 324,156 L 370,156 Q 394,156 394,180 Q 394,204 370,204 L 324,204 Z" fill="url(#bg)"/>
+    <!-- Inner cutout bottom -->
+    <path d="M 324,272 L 378,272 Q 408,272 408,312 Q 408,356 378,356 L 324,356 Z" fill="url(#bg)"/>
+    <!-- Highlight on B -->
+    <rect x="286" y="126" width="8" height="240" rx="4" fill="#ffffff" opacity="0.15"/>
+  </g>
+
+  <!-- Subtle accent line at bottom -->
+  <rect x="80" y="430" width="352" height="4" rx="2" fill="#cc0000" opacity="0.5"/>
+</svg>
