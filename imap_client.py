@@ -1,6 +1,7 @@
 import asyncio
 import email
 import email.header
+import email.message
 import email.utils
 import imaplib
 import os
@@ -8,10 +9,7 @@ import re
 from dataclasses import dataclass
 from functools import partial
 
-IMAP_HOST = os.environ.get("IMAP_HOST", "")
-IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
-EMAIL_USER = os.environ.get("EMAIL_USER", "")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
+from accounts import get_account
 
 
 def _decode_header(value: str | None) -> str:
@@ -70,9 +68,10 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
-def _connect() -> imaplib.IMAP4_SSL:
-    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-    conn.login(EMAIL_USER, EMAIL_PASSWORD)
+def _connect(account: str = "a") -> imaplib.IMAP4_SSL:
+    acc = get_account(account)
+    conn = imaplib.IMAP4_SSL(acc.imap_host, acc.imap_port)
+    conn.login(acc.email_user, acc.email_password)
     return conn
 
 
@@ -81,31 +80,32 @@ async def _run(func, *args, **kwargs):
     return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
 
-async def list_folders() -> list[str]:
+async def list_folders(account: str = "a") -> list[str]:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             status, data = conn.list()
             folders = []
             for item in data:
                 if isinstance(item, bytes):
-                    match = re.search(rb'"([^"]*)"$|(\S+)$', item)
-                    if match:
-                        name = (match.group(1) or match.group(2)).decode("utf-7-imap", errors="replace")
-                        try:
-                            name = item.split(b'" ')[-1].strip(b'"').decode()
-                        except Exception:
-                            pass
-                        folders.append(name)
+                    try:
+                        name = item.split(b'" ')[-1].strip(b'"').decode()
+                    except Exception:
+                        match = re.search(rb'"([^"]*)"$|(\S+)$', item)
+                        if match:
+                            name = (match.group(1) or match.group(2)).decode("utf-8", errors="replace")
+                        else:
+                            continue
+                    folders.append(name)
             return folders
         finally:
             conn.logout()
     return await _run(_do)
 
 
-async def list_emails(folder: str = "INBOX", page: int = 1, page_size: int = 20) -> dict:
+async def list_emails(folder: str = "INBOX", page: int = 1, page_size: int = 20, account: str = "a") -> dict:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             conn.select(folder, readonly=True)
             status, data = conn.uid("search", None, "ALL")
@@ -158,9 +158,9 @@ async def list_emails(folder: str = "INBOX", page: int = 1, page_size: int = 20)
     return await _run(_do)
 
 
-async def read_email(folder: str, uid: int) -> dict:
+async def read_email(folder: str, uid: int, account: str = "a") -> dict:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             conn.select(folder)
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
@@ -193,9 +193,9 @@ async def read_email(folder: str, uid: int) -> dict:
     return await _run(_do)
 
 
-async def search_emails(folder: str = "INBOX", query: str = "", criteria: str = "ALL") -> list[dict]:
+async def search_emails(folder: str = "INBOX", query: str = "", criteria: str = "ALL", account: str = "a") -> list[dict]:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             conn.select(folder, readonly=True)
             if query and criteria.upper() == "ALL":
@@ -227,9 +227,9 @@ async def search_emails(folder: str = "INBOX", query: str = "", criteria: str = 
     return await _run(_do)
 
 
-async def move_email(folder: str, uid: int, destination: str) -> str:
+async def move_email(folder: str, uid: int, destination: str, account: str = "a") -> str:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             conn.select(folder)
             status, _ = conn.uid("copy", str(uid), destination)
@@ -243,13 +243,13 @@ async def move_email(folder: str, uid: int, destination: str) -> str:
     return await _run(_do)
 
 
-async def delete_email(folder: str, uid: int) -> str:
-    return await move_email(folder, uid, "Trash")
+async def delete_email(folder: str, uid: int, account: str = "a") -> str:
+    return await move_email(folder, uid, "Trash", account)
 
 
-async def create_folder(folder_name: str) -> str:
+async def create_folder(folder_name: str, account: str = "a") -> str:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             status, _ = conn.create(folder_name)
             return f"Created folder: {folder_name}" if status == "OK" else f"Failed to create: {folder_name}"
@@ -258,9 +258,9 @@ async def create_folder(folder_name: str) -> str:
     return await _run(_do)
 
 
-async def rename_folder(old_name: str, new_name: str) -> str:
+async def rename_folder(old_name: str, new_name: str, account: str = "a") -> str:
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             status, _ = conn.rename(old_name, new_name)
             return f"Renamed {old_name} -> {new_name}" if status == "OK" else f"Failed to rename"
@@ -269,11 +269,11 @@ async def rename_folder(old_name: str, new_name: str) -> str:
     return await _run(_do)
 
 
-async def delete_folder(folder_name: str) -> str:
+async def delete_folder(folder_name: str, account: str = "a") -> str:
     if folder_name.upper() == "INBOX":
         return "Refusing to delete INBOX"
     def _do():
-        conn = _connect()
+        conn = _connect(account)
         try:
             status, _ = conn.delete(folder_name)
             return f"Deleted folder: {folder_name}" if status == "OK" else f"Failed to delete: {folder_name}"
@@ -282,6 +282,125 @@ async def delete_folder(folder_name: str) -> str:
     return await _run(_do)
 
 
-async def get_email_for_reply(folder: str, uid: int) -> dict:
+async def get_email_for_reply(folder: str, uid: int, account: str = "a") -> dict:
     """Get email data needed for constructing a reply."""
-    return await read_email(folder, uid)
+    return await read_email(folder, uid, account)
+
+
+async def set_flags(folder: str, uid: int, flags: str, action: str = "add", account: str = "a") -> str:
+    """Add or remove IMAP flags. action: 'add' or 'remove'."""
+    def _do():
+        conn = _connect(account)
+        try:
+            conn.select(folder)
+            op = "+FLAGS" if action == "add" else "-FLAGS"
+            status, _ = conn.uid("store", str(uid), op, f"({flags})")
+            if status != "OK":
+                return f"Failed to {action} flags {flags} on UID {uid}"
+            return f"Flags {flags} {'added to' if action == 'add' else 'removed from'} UID {uid}"
+        finally:
+            conn.logout()
+    return await _run(_do)
+
+
+async def get_unread_count(folder: str = "INBOX", account: str = "a") -> dict:
+    def _do():
+        conn = _connect(account)
+        try:
+            conn.select(folder, readonly=True)
+            status, data = conn.uid("search", None, "UNSEEN")
+            if status != "OK" or not data[0]:
+                return {"folder": folder, "unread": 0}
+            uids = data[0].split()
+            return {"folder": folder, "unread": len(uids)}
+        finally:
+            conn.logout()
+    return await _run(_do)
+
+
+async def batch_move_emails(folder: str, uids: list[int], destination: str, account: str = "a") -> str:
+    def _do():
+        conn = _connect(account)
+        try:
+            conn.select(folder)
+            moved = 0
+            for uid in uids:
+                status, _ = conn.uid("copy", str(uid), destination)
+                if status == "OK":
+                    conn.uid("store", str(uid), "+FLAGS", "(\\Deleted)")
+                    moved += 1
+            conn.expunge()
+            return f"Moved {moved}/{len(uids)} emails from {folder} to {destination}"
+        finally:
+            conn.logout()
+    return await _run(_do)
+
+
+async def batch_delete_emails(folder: str, uids: list[int], account: str = "a") -> str:
+    return await batch_move_emails(folder, uids, "Trash", account)
+
+
+async def download_attachment(folder: str, uid: int, filename: str, save_dir: str, account: str = "a") -> str:
+    """Extract an attachment from an email and save it to disk."""
+    def _do():
+        conn = _connect(account)
+        try:
+            conn.select(folder, readonly=True)
+            status, data = conn.uid("fetch", str(uid), "(RFC822)")
+            if status != "OK" or not data or not isinstance(data[0], tuple):
+                return "Email not found"
+            msg = email.message_from_bytes(data[0][1])
+            for part in msg.walk():
+                fn = part.get_filename()
+                if fn and _decode_header(fn) == filename:
+                    payload = part.get_payload(decode=True)
+                    if payload is None:
+                        return f"Attachment '{filename}' has no content"
+                    os.makedirs(save_dir, exist_ok=True)
+                    dest = os.path.join(save_dir, filename)
+                    with open(dest, "wb") as f:
+                        f.write(payload)
+                    return f"Saved attachment to {dest} ({len(payload)} bytes)"
+            return f"Attachment '{filename}' not found in email UID {uid}"
+        finally:
+            conn.logout()
+    return await _run(_do)
+
+
+async def get_email_for_forward(folder: str, uid: int, account: str = "a") -> dict:
+    """Get full email data including raw attachment parts for forwarding."""
+    def _do():
+        conn = _connect(account)
+        try:
+            conn.select(folder, readonly=True)
+            status, data = conn.uid("fetch", str(uid), "(RFC822)")
+            if status != "OK" or not data or not isinstance(data[0], tuple):
+                return {"error": "Email not found"}
+            raw = data[0][1]
+            msg = email.message_from_bytes(raw)
+            body = _get_text_body(msg)
+            attachments_data = []
+            for part in msg.walk():
+                fn = part.get_filename()
+                if fn:
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        attachments_data.append({
+                            "filename": _decode_header(fn),
+                            "content_type": part.get_content_type(),
+                            "data": payload,
+                        })
+            return {
+                "uid": uid,
+                "subject": _decode_header(msg.get("Subject")),
+                "from": _decode_header(msg.get("From")),
+                "to": _decode_header(msg.get("To")),
+                "cc": _decode_header(msg.get("Cc")),
+                "date": msg.get("Date", ""),
+                "message_id": msg.get("Message-ID", ""),
+                "body": body,
+                "attachments_data": attachments_data,
+            }
+        finally:
+            conn.logout()
+    return await _run(_do)

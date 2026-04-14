@@ -3,5 +3,10 @@ services:
     build: .
     stdin_open: true
     env_file: .env
+    extra_hosts:
+      - "mail.panoptic.com.ua:178.162.234.145"
     volumes:
       - ${HOME}/snap/thunderbird/common/.thunderbird/n7bg74at.default/abook.sqlite:/data/abook.sqlite:ro
+      - ${HOME}/Documents:/documents:ro
+      - /tmp:/tmp
+      - ${HOME}/.ssh:/root/.ssh:ro
