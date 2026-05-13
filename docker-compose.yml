@@ -8,5 +8,6 @@ services:
     volumes:
       - ${HOME}/snap/thunderbird/common/.thunderbird/n7bg74at.default/abook.sqlite:/data/abook.sqlite:ro
       - ${HOME}/Documents:/documents:ro
+      - ${HOME}:/home/vovkes:ro
       - /tmp:/tmp
       - ${HOME}/.ssh:/root/.ssh:ro
