@@ -56,7 +56,7 @@ async def list_emails(folder: str = "INBOX", page: int = 1, page_size: int = 20,
 
 @mcp.tool()
 async def read_email(folder: str, uid: int, account: str = "a") -> str:
-    """Read a full email by UID. Returns subject, from, to, cc, date, body, attachments."""
+    """Read a full email by UID. Returns subject, from, to, cc, date, body (plaintext), body_html (raw HTML if present), attachments."""
     result = await imap_client.read_email(folder, uid, account)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -85,27 +85,27 @@ async def delete_email(folder: str, uid: int, account: str = "a") -> str:
 # --- Send tools ---
 
 @mcp.tool()
-async def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "", attachments: list[str] | None = None, account: str = "a") -> str:
-    """Send a new email. 'to' can be comma-separated for multiple recipients. 'attachments' is a list of absolute file paths. Use account='b' to send from panoptic.com.ua."""
-    return await smtp_client.send_email(to, subject, body, cc, bcc, attachments, account)
+async def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "", attachments: list[str] | None = None, account: str = "a", html: bool = False) -> str:
+    """Send a new email. 'to' can be comma-separated for multiple recipients. 'attachments' is a list of absolute file paths. Set html=true to send 'body' as HTML (a plaintext fallback is generated automatically). Use account='b' to send from panoptic.com.ua."""
+    return await smtp_client.send_email(to, subject, body, cc, bcc, attachments, account, html)
 
 
 @mcp.tool()
-async def reply_to_email(folder: str, uid: int, body: str, reply_all: bool = False, attachments: list[str] | None = None, account: str = "a") -> str:
-    """Reply to an email by UID. Set reply_all=true to reply to all recipients. 'attachments' is a list of absolute file paths."""
+async def reply_to_email(folder: str, uid: int, body: str, reply_all: bool = False, attachments: list[str] | None = None, account: str = "a", html: bool = False) -> str:
+    """Reply to an email by UID. Set reply_all=true to reply to all recipients. 'attachments' is a list of absolute file paths. Set html=true to send 'body' as HTML."""
     original = await imap_client.get_email_for_reply(folder, uid, account)
     if "error" in original:
         return original["error"]
-    return await smtp_client.reply_to_email(original, body, reply_all, attachments, account)
+    return await smtp_client.reply_to_email(original, body, reply_all, attachments, account, html)
 
 
 @mcp.tool()
-async def forward_email(folder: str, uid: int, to: str, body: str = "", attachments: list[str] | None = None, account: str = "a") -> str:
-    """Forward an email by UID to another recipient. Original attachments are included. Extra 'attachments' is a list of file paths."""
+async def forward_email(folder: str, uid: int, to: str, body: str = "", attachments: list[str] | None = None, account: str = "a", html: bool = False) -> str:
+    """Forward an email by UID to another recipient. Original attachments are included. Extra 'attachments' is a list of file paths. Set html=true to forward as HTML (uses the original message's HTML part when present)."""
     original = await imap_client.get_email_for_forward(folder, uid, account)
     if "error" in original:
         return original["error"]
-    return await smtp_client.forward_email(original, to, body, attachments, account)
+    return await smtp_client.forward_email(original, to, body, attachments, account, html)
 
 
 # --- Email flags ---

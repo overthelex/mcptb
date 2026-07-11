@@ -10,6 +10,21 @@ from email.utils import formataddr, formatdate, make_msgid
 import aiosmtplib
 
 from accounts import get_account
+from imap_client import _connect as _imap_connect
+from imap_client import _strip_html
+
+
+def _smtp_kwargs(acc) -> dict:
+    """SMTP auth kwargs: client cert (no SASL) or username/password."""
+    ctx = acc.ssl_context()
+    if ctx is not None:
+        # Cert presented at TLS handshake (permit_tls_clientcerts); no AUTH.
+        return {"use_tls": True, "tls_context": ctx}
+    return {
+        "use_tls": True,
+        "username": acc.email_user,
+        "password": acc.email_password,
+    }
 
 
 def _save_to_sent(msg, account: str = "a"):
@@ -17,8 +32,7 @@ def _save_to_sent(msg, account: str = "a"):
     import time
     acc = get_account(account)
     try:
-        conn = imaplib.IMAP4_SSL(acc.imap_host, acc.imap_port)
-        conn.login(acc.email_user, acc.email_password)
+        conn = _imap_connect(account)
         # Try common Sent folder names
         sent_folder = None
         for name in ["Sent", "Sent Messages", "INBOX.Sent", "Sent Items"]:
@@ -61,6 +75,18 @@ def _save_to_sent(msg, account: str = "a"):
             f.write(f"{e}\n")
 
 
+def _attach_body(msg: MIMEMultipart, body: str, html: bool = False) -> None:
+    """Attach the message body. If html=True, send a multipart/alternative with a
+    stripped plaintext fallback plus the HTML part; otherwise plain text only."""
+    if html:
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(_strip_html(body), "plain", "utf-8"))
+        alt.attach(MIMEText(body, "html", "utf-8"))
+        msg.attach(alt)
+    else:
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+
 def _attach_files(msg: MIMEMultipart, file_paths: list[str]) -> list[str]:
     """Attach files to a MIME message. Returns list of attached filenames."""
     attached = []
@@ -93,6 +119,7 @@ async def send_email(
     bcc: str = "",
     attachments: list[str] | None = None,
     account: str = "a",
+    html: bool = False,
 ) -> str:
     acc = get_account(account)
     msg = MIMEMultipart()
@@ -106,7 +133,7 @@ async def send_email(
     msg["Message-ID"] = make_msgid(domain=acc.email_user.split("@")[-1])
     if cc:
         msg["Cc"] = cc
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    _attach_body(msg, body, html)
     if attachments:
         _attach_files(msg, attachments)
 
@@ -122,10 +149,8 @@ async def send_email(
         msg,
         hostname=acc.smtp_host,
         port=acc.smtp_port,
-        username=acc.email_user,
-        password=acc.email_password,
-        use_tls=True,
         recipients=all_recipients,
+        **_smtp_kwargs(acc),
     )
     _save_to_sent(msg, account)
     return f"Email sent to {msg['To']} (from {acc.email_user})"
@@ -137,6 +162,7 @@ async def reply_to_email(
     reply_all: bool = False,
     attachments: list[str] | None = None,
     account: str = "a",
+    html: bool = False,
 ) -> str:
     acc = get_account(account)
     subject = original.get("subject", "")
@@ -172,7 +198,7 @@ async def reply_to_email(
         msg["In-Reply-To"] = original["message_id"]
         msg["References"] = original.get("in_reply_to", "") + " " + original["message_id"]
 
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    _attach_body(msg, body, html)
     if attachments:
         _attach_files(msg, attachments)
 
@@ -180,10 +206,8 @@ async def reply_to_email(
         msg,
         hostname=acc.smtp_host,
         port=acc.smtp_port,
-        username=acc.email_user,
-        password=acc.email_password,
-        use_tls=True,
         recipients=recipients,
+        **_smtp_kwargs(acc),
     )
     _save_to_sent(msg, account)
     return f"Reply sent to {msg['To']} (from {acc.email_user})"
@@ -195,6 +219,7 @@ async def forward_email(
     body: str = "",
     attachments: list[str] | None = None,
     account: str = "a",
+    html: bool = False,
 ) -> str:
     acc = get_account(account)
     subject = original.get("subject", "")
@@ -211,16 +236,30 @@ async def forward_email(
     if original.get("message_id"):
         msg["References"] = original["message_id"]
 
-    # Build forwarded body
-    fwd_header = (
-        f"\n\n---------- Forwarded message ----------\n"
-        f"From: {original.get('from', '')}\n"
-        f"Date: {original.get('date', '')}\n"
-        f"Subject: {original.get('subject', '')}\n"
-        f"To: {original.get('to', '')}\n\n"
-    )
-    full_body = body + fwd_header + original.get("body", "")
-    msg.attach(MIMEText(full_body, "plain", "utf-8"))
+    # Build forwarded body. Prefer the original HTML part when available and
+    # forwarding as HTML, otherwise fall back to the plaintext body.
+    if html:
+        from html import escape
+
+        orig_html = original.get("body_html") or escape(original.get("body", "")).replace("\n", "<br>")
+        fwd_header = (
+            "<br><br>---------- Forwarded message ----------<br>"
+            f"From: {escape(original.get('from', ''))}<br>"
+            f"Date: {escape(original.get('date', ''))}<br>"
+            f"Subject: {escape(original.get('subject', ''))}<br>"
+            f"To: {escape(original.get('to', ''))}<br><br>"
+        )
+        full_body = body + fwd_header + orig_html
+    else:
+        fwd_header = (
+            f"\n\n---------- Forwarded message ----------\n"
+            f"From: {original.get('from', '')}\n"
+            f"Date: {original.get('date', '')}\n"
+            f"Subject: {original.get('subject', '')}\n"
+            f"To: {original.get('to', '')}\n\n"
+        )
+        full_body = body + fwd_header + original.get("body", "")
+    _attach_body(msg, full_body, html)
 
     # Attach original email's attachments
     for att in original.get("attachments_data", []):
@@ -241,10 +280,8 @@ async def forward_email(
         msg,
         hostname=acc.smtp_host,
         port=acc.smtp_port,
-        username=acc.email_user,
-        password=acc.email_password,
-        use_tls=True,
         recipients=recipients,
+        **_smtp_kwargs(acc),
     )
     _save_to_sent(msg, account)
     return f"Forwarded to {to} (from {acc.email_user})"

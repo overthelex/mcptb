@@ -57,6 +57,25 @@ def _get_text_body(msg: email.message.Message) -> str:
         return text
 
 
+def _get_html_body(msg: email.message.Message) -> str:
+    """Return the raw text/html body of a message, or '' if none present."""
+    if msg.is_multipart():
+        html_parts = []
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    html_parts.append(payload.decode(charset, errors="replace"))
+        return "\n".join(html_parts)
+    if msg.get_content_type() == "text/html":
+        payload = msg.get_payload(decode=True)
+        if payload:
+            charset = msg.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+    return ""
+
+
 def _strip_html(html: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", "", text)
@@ -68,10 +87,22 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
+def _quote_folder(folder: str) -> str:
+    if " " in folder and not folder.startswith('"'):
+        return f'"{folder}"'
+    return folder
+
+
 def _connect(account: str = "a") -> imaplib.IMAP4_SSL:
     acc = get_account(account)
-    conn = imaplib.IMAP4_SSL(acc.imap_host, acc.imap_port)
-    conn.login(acc.email_user, acc.email_password)
+    ctx = acc.ssl_context()
+    if ctx is not None:
+        # Passwordless client-certificate login (SASL EXTERNAL).
+        conn = imaplib.IMAP4_SSL(acc.imap_host, acc.imap_port, ssl_context=ctx)
+        conn.authenticate("EXTERNAL", lambda _: b"")
+    else:
+        conn = imaplib.IMAP4_SSL(acc.imap_host, acc.imap_port)
+        conn.login(acc.email_user, acc.email_password)
     return conn
 
 
@@ -107,7 +138,7 @@ async def list_emails(folder: str = "INBOX", page: int = 1, page_size: int = 20,
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder, readonly=True)
+            conn.select(_quote_folder(folder), readonly=True)
             status, data = conn.uid("search", None, "ALL")
             if status != "OK":
                 return {"emails": [], "total": 0, "page": page}
@@ -162,7 +193,7 @@ async def read_email(folder: str, uid: int, account: str = "a") -> dict:
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder)
+            conn.select(_quote_folder(folder))
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status != "OK" or not data or not isinstance(data[0], tuple):
                 return {"error": "Email not found"}
@@ -171,6 +202,9 @@ async def read_email(folder: str, uid: int, account: str = "a") -> dict:
             body = _get_text_body(msg)
             if len(body) > 50000:
                 body = body[:50000] + "\n\n... [truncated, original length: {}]".format(len(body))
+            body_html = _get_html_body(msg)
+            if len(body_html) > 200000:
+                body_html = body_html[:200000] + "\n<!-- ... [truncated, original length: {}] -->".format(len(body_html))
             attachments = []
             for part in msg.walk():
                 fn = part.get_filename()
@@ -186,6 +220,7 @@ async def read_email(folder: str, uid: int, account: str = "a") -> dict:
                 "message_id": msg.get("Message-ID", ""),
                 "in_reply_to": msg.get("In-Reply-To", ""),
                 "body": body,
+                "body_html": body_html,
                 "attachments": attachments,
             }
         finally:
@@ -197,7 +232,7 @@ async def search_emails(folder: str = "INBOX", query: str = "", criteria: str = 
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder, readonly=True)
+            conn.select(_quote_folder(folder), readonly=True)
             if query and criteria.upper() == "ALL":
                 search_criteria = f'(OR (SUBJECT "{query}") (FROM "{query}"))'
             elif query:
@@ -231,7 +266,7 @@ async def move_email(folder: str, uid: int, destination: str, account: str = "a"
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder)
+            conn.select(_quote_folder(folder))
             status, _ = conn.uid("copy", str(uid), destination)
             if status != "OK":
                 return f"Failed to copy to {destination}"
@@ -292,7 +327,7 @@ async def set_flags(folder: str, uid: int, flags: str, action: str = "add", acco
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder)
+            conn.select(_quote_folder(folder))
             op = "+FLAGS" if action == "add" else "-FLAGS"
             status, _ = conn.uid("store", str(uid), op, f"({flags})")
             if status != "OK":
@@ -307,7 +342,7 @@ async def get_unread_count(folder: str = "INBOX", account: str = "a") -> dict:
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder, readonly=True)
+            conn.select(_quote_folder(folder), readonly=True)
             status, data = conn.uid("search", None, "UNSEEN")
             if status != "OK" or not data[0]:
                 return {"folder": folder, "unread": 0}
@@ -322,7 +357,7 @@ async def batch_move_emails(folder: str, uids: list[int], destination: str, acco
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder)
+            conn.select(_quote_folder(folder))
             moved = 0
             for uid in uids:
                 status, _ = conn.uid("copy", str(uid), destination)
@@ -345,7 +380,7 @@ async def download_attachment(folder: str, uid: int, filename: str, save_dir: st
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder, readonly=True)
+            conn.select(_quote_folder(folder), readonly=True)
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status != "OK" or not data or not isinstance(data[0], tuple):
                 return "Email not found"
@@ -372,13 +407,14 @@ async def get_email_for_forward(folder: str, uid: int, account: str = "a") -> di
     def _do():
         conn = _connect(account)
         try:
-            conn.select(folder, readonly=True)
+            conn.select(_quote_folder(folder), readonly=True)
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status != "OK" or not data or not isinstance(data[0], tuple):
                 return {"error": "Email not found"}
             raw = data[0][1]
             msg = email.message_from_bytes(raw)
             body = _get_text_body(msg)
+            body_html = _get_html_body(msg)
             attachments_data = []
             for part in msg.walk():
                 fn = part.get_filename()
@@ -399,6 +435,7 @@ async def get_email_for_forward(folder: str, uid: int, account: str = "a") -> di
                 "date": msg.get("Date", ""),
                 "message_id": msg.get("Message-ID", ""),
                 "body": body,
+                "body_html": body_html,
                 "attachments_data": attachments_data,
             }
         finally:
